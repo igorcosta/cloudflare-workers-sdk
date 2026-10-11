@@ -2,11 +2,6 @@ interface Env {
 	DISK: Fetcher;
 }
 
-interface DirectoryEntry {
-	name: string;
-	type: string;
-}
-
 interface PendingDelete {
 	marked: Promise<boolean>;
 	promise: Promise<void>;
@@ -16,17 +11,6 @@ interface PendingDelete {
 
 const pendingDeletes = new Map<string, PendingDelete>();
 const extensions = [".sqlite", ".sqlite-shm", ".sqlite-wal"];
-
-async function list(env: Env, namespace: string): Promise<DirectoryEntry[]> {
-	const response = await env.DISK.fetch(`http://disk/${namespace}`);
-	if (response.status === 404) {
-		return [];
-	}
-	if (!response.ok) {
-		throw new Error("Failed to list Workflow storage");
-	}
-	return response.json();
-}
 
 /** Deletes only files, retaining the marker until all SQLite sidecars are gone. */
 async function remove(
@@ -38,13 +22,17 @@ async function remove(
 	for (const extension of extensions) {
 		for (let attempt = 0; attempt <= 40; attempt++) {
 			try {
-				const entry = (await list(env, namespace)).find(
-					({ name }) => name === id + extension
+				const file = await env.DISK.fetch(
+					`http://disk/${namespace}/${id}${extension}`,
+					{ method: "HEAD" }
 				);
-				if (entry === undefined) {
+				if (file.status === 404) {
 					break;
 				}
-				if (entry.type !== "file") {
+				if (!file.ok) {
+					throw new Error("Failed to inspect Workflow storage file");
+				}
+				if (file.headers.get("Content-Type") !== "application/octet-stream") {
 					pending.failed = true;
 					break;
 				}
@@ -212,24 +200,32 @@ export default {
 			return new Response("Method Not Allowed", { status: 405 });
 		}
 		if (id === undefined) {
-			const entries = await list(env, namespace);
+			const entries: unknown = await request.json();
+			if (
+				!Array.isArray(entries) ||
+				!entries.every(
+					(entry): entry is string =>
+						typeof entry === "string" && !/[\\/\0]/.test(entry)
+				)
+			) {
+				return new Response("Invalid storage entries", { status: 400 });
+			}
 			const ids = new Set<string>();
 			for (const entry of entries) {
-				if (entry.type !== "file") {
-					continue;
-				}
-				const instance = /^([a-f0-9]{64})\.sqlite(?:-shm|-wal)?$/i.exec(
-					entry.name
-				);
+				const instance = /^([a-f0-9]{64})\.sqlite(?:-shm|-wal)?$/i.exec(entry);
 				if (instance !== null) {
 					ids.add(instance[1]);
-				} else if (
-					extensions.some((extension) => entry.name.endsWith(extension))
-				) {
-					await env.DISK.fetch(
-						`http://disk/${namespace}/${encodeURIComponent(entry.name)}`,
-						{ method: "DELETE" }
-					);
+				} else if (extensions.some((extension) => entry.endsWith(extension))) {
+					const fileUrl = `http://disk/${namespace}/${encodeURIComponent(entry)}`;
+					try {
+						const file = await env.DISK.fetch(fileUrl, { method: "HEAD" });
+						if (
+							file.ok &&
+							file.headers.get("Content-Type") === "application/octet-stream"
+						) {
+							await env.DISK.fetch(fileUrl, { method: "DELETE" });
+						}
+					} catch {}
 				}
 			}
 			await Promise.all(

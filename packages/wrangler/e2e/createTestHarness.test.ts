@@ -1296,16 +1296,23 @@ describe("createTestHarness", () => {
 					workers: [{ configPath: "./wrangler.jsonc" }],
 				});
 				try {
+					process.stderr.write("Listening for Workflow RPC\\n");
 					await server.listen();
+					process.stderr.write("Getting Workflow RPC export\\n");
 					const api = await server.getWorker("rpc-workflow-worker").getExport();
+					process.stderr.write("Creating first Workflow through RPC\\n");
 					const first = api.createWorkflow();
 					assert.equal(typeof first, "string");
 					assert.match(first, /^[0-9a-f-]{36}$/);
+					process.stderr.write("Creating explicit Workflow through RPC\\n");
 					assert.equal(api.createWorkflow("explicit-id"), "explicit-id");
+					process.stderr.write("Deleting Workflow through RPC\\n");
 					api.deleteWorkflow("explicit-id");
+					process.stderr.write("Recreating Workflow through RPC\\n");
 					assert.equal(api.createWorkflow("explicit-id"), "explicit-id");
 					console.log("Workflow RPC completed");
 				} finally {
+					process.stderr.write("Closing Workflow RPC server\\n");
 					await server.close();
 				}
 			`

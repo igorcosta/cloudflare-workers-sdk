@@ -364,12 +364,25 @@ export async function deleteWorkflow(
 	if (c.env.MINIFLARE_WORKFLOW_STORAGE === undefined) {
 		return errorResponse(500, 10001, "Workflow storage service not available");
 	}
+	if (c.env.MINIFLARE_LOOPBACK === undefined) {
+		return errorResponse(500, 10001, "Loopback service not available");
+	}
 
 	const encodedName = encodeURIComponent(workflowName);
 	const loopbackUrl = `http://localhost/core/workflow-storage/${encodedName}`;
+	const listing = await c.env.MINIFLARE_LOOPBACK.fetch(loopbackUrl);
+	if (!listing.ok && listing.status !== 404) {
+		return errorResponse(500, 10001, "Failed to read workflow storage");
+	}
+	const entries: DirectoryEntry[] = listing.ok ? await listing.json() : [];
 
 	await c.env.MINIFLARE_WORKFLOW_STORAGE.fetch(loopbackUrl, {
 		method: "DELETE",
+		body: JSON.stringify(
+			entries
+				.filter((entry) => entry.type === "file")
+				.map((entry) => entry.name)
+		),
 	});
 
 	statusCountsCache.delete(workflowName);

@@ -82,9 +82,68 @@ test("disk-backed deletion defers cleanup and serializes overlapping requests", 
 			`http://localhost${STORAGE_PATH}?waitForPendingDelete=1`
 		),
 	]);
+	await Promise.all([deleted.text(), waited.text()]);
 	expect(deleted.status).toBe(204);
 	expect(waited.status).toBe(204);
 	expect(await fs.readdir(directory)).toEqual([]);
+});
+
+test("disk-backed deletion does not depend on native directory reads", async ({
+	expect,
+}) => {
+	const root = await useTmp();
+	const directory = await writeFiles(root);
+	const storage = await startStorage(
+		root,
+		`
+export default {
+	async fetch(request, env) {
+		if (new URL(request.url).pathname === "/miniflare-workflows-test") {
+			throw new Error("Native directory reads are unavailable");
+		}
+		return env.DISK.fetch(request);
+	}
+};
+`
+	);
+	const deleted = await storage.dispatchFetch(
+		`http://localhost${STORAGE_PATH}`,
+		{
+			method: "DELETE",
+		}
+	);
+	const body = await deleted.text();
+	expect(deleted.status, body).toBe(204);
+	expect(await fs.readdir(directory)).toEqual([]);
+	await writeFiles(root);
+	const bulk = await storage.dispatchFetch(
+		"http://localhost/core/workflow-storage/test",
+		{ method: "DELETE", body: JSON.stringify(await fs.readdir(directory)) }
+	);
+	const bulkBody = await bulk.text();
+	expect(bulk.status, bulkBody).toBe(200);
+	expect(await fs.readdir(directory)).toEqual([]);
+});
+
+test("bulk deletion rejects paths outside its Workflow namespace", async ({
+	expect,
+}) => {
+	const root = await useTmp();
+	const directory = await writeFiles(root);
+	const storage = await startStorage(root);
+	for (const entry of [
+		"../outside.sqlite",
+		"..\\outside.sqlite",
+		"bad\0.sqlite",
+	]) {
+		const response = await storage.dispatchFetch(
+			"http://localhost/core/workflow-storage/test",
+			{ method: "DELETE", body: JSON.stringify([entry]) }
+		);
+		await response.text();
+		expect(response.status).toBe(400);
+	}
+	expect(await fs.readdir(directory)).toHaveLength(3);
 });
 
 test("disk-backed deletion refuses directories while still removing other SQLite files", async ({
@@ -227,7 +286,7 @@ test("bulk deletion removes orphaned SQLite sidecars and metadata but preserves 
 	const storage = await startStorage(root);
 	const response = await storage.dispatchFetch(
 		"http://localhost/core/workflow-storage/test",
-		{ method: "DELETE" }
+		{ method: "DELETE", body: JSON.stringify(await fs.readdir(directory)) }
 	);
 	await response.text();
 	expect(response.status).toBe(200);
@@ -238,6 +297,34 @@ test("bulk deletion removes orphaned SQLite sidecars and metadata but preserves 
 	expect(
 		await fs.readFile(path.join(directory, "keep.sqlite", "keep"), "utf8")
 	).toBe("keep");
+});
+
+test("bulk deletion remains best-effort when a metadata file is locked", async ({
+	expect,
+}) => {
+	const root = await useTmp();
+	const directory = await writeFiles(root);
+	await fs.writeFile(path.join(directory, "metadata.sqlite"), "metadata");
+	const storage = await startStorage(
+		root,
+		`
+export default {
+	async fetch(request, env) {
+		if (request.method === "DELETE" && new URL(request.url).pathname.endsWith("/metadata.sqlite")) {
+			throw new Error("File is locked");
+		}
+		return env.DISK.fetch(request);
+	}
+};
+`
+	);
+	const response = await storage.dispatchFetch(
+		"http://localhost/core/workflow-storage/test",
+		{ method: "DELETE", body: JSON.stringify(await fs.readdir(directory)) }
+	);
+	await response.text();
+	expect(response.status).toBe(200);
+	expect(await fs.readdir(directory)).toEqual(["metadata.sqlite"]);
 });
 
 test("disk-backed storage restricts routes, methods and encoded paths", async ({
