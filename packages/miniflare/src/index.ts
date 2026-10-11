@@ -97,8 +97,8 @@ import {
 	imagesLocalFetcher,
 } from "./plugins/images/fetcher";
 import {
+	recoverWorkflowStorage,
 	SERVICE_WORKFLOW_STORAGE,
-	WorkflowStorageServer,
 } from "./plugins/workflows/storage";
 import {
 	HttpOptions_Style,
@@ -829,7 +829,7 @@ export class Miniflare {
 		string,
 		{ browserProcess: Process; wsEndpoint: string }
 	> = new Map();
-	#workflowStorageServer?: WorkflowStorageServer;
+	#workflowStoragePersistPath?: string;
 
 	readonly #runtime?: Runtime;
 	readonly #removeExitHook?: () => void;
@@ -1322,23 +1322,53 @@ export class Miniflare {
 		}
 	}
 
-	/** Keeps Workflow filesystem requests independent of the Node RPC caller. */
-	async #getWorkflowStorageServer(): Promise<{
-		storage: WorkflowStorageServer;
-		address: string;
-	}> {
+	/** Lists Workflow storage with creation times for the Local Explorer. */
+	async #handleLoopbackWorkflowStorageRequest(url: URL): Promise<Response> {
+		const workflowName = decodeURIComponent(
+			url.pathname.slice("/core/workflow-storage/".length)
+		);
+		assert(workflowName, "Workflow name is required");
 		const persistPath = getPersistPath(
 			WORKFLOWS_PLUGIN_NAME,
 			this.#tmpPath,
 			this.#sharedOpts.isolatedResourcePersistencePath
 		);
-		this.#workflowStorageServer ??= new WorkflowStorageServer(
+		const namespacePath = path.join(
 			persistPath,
-			this.#loopbackSecret,
-			(error) => this.#log.error(error)
+			`miniflare-workflows-${workflowName}`
 		);
-		const address = await this.#workflowStorageServer.configure(persistPath);
-		return { storage: this.#workflowStorageServer, address };
+		if (!namespacePath.startsWith(path.resolve(persistPath) + path.sep)) {
+			return new Response("Invalid workflow name", { status: 400 });
+		}
+		try {
+			const entries = await fs.promises.readdir(namespacePath, {
+				withFileTypes: true,
+			});
+			return Response.json(
+				await Promise.all(
+					entries.map(async (entry) => {
+						let birthtimeMs = 0;
+						if (entry.isFile()) {
+							try {
+								birthtimeMs = (
+									await fs.promises.stat(path.join(namespacePath, entry.name))
+								).birthtimeMs;
+							} catch {}
+						}
+						return {
+							name: entry.name,
+							type: entry.isDirectory() ? "directory" : "file",
+							birthtimeMs,
+						};
+					})
+				)
+			);
+		} catch (error) {
+			if (isFileNotFoundError(error)) {
+				return new Response("Not Found", { status: 404 });
+			}
+			throw error;
+		}
 	}
 
 	#handleLoopback = async (
@@ -1560,8 +1590,10 @@ export class Miniflare {
 			} else if (url.pathname.startsWith("/core/do-storage/")) {
 				response = await this.#handleLoopbackDOStorageRequest(url);
 			} else if (url.pathname.startsWith("/core/workflow-storage/")) {
-				const { storage } = await this.#getWorkflowStorageServer();
-				response = await storage.fetch(url, request.method);
+				response =
+					request.method === "GET"
+						? await this.#handleLoopbackWorkflowStorageRequest(url)
+						: new Response("Method Not Allowed", { status: 405 });
 			} else if (url.pathname === "/core/dev-registry") {
 				// Used by the local explorer to aggregate resources across instances
 				const registryPath = this.#devRegistry.getRegistryPath();
@@ -1887,29 +1919,6 @@ export class Miniflare {
 
 		// Use Map to dedupe services by name
 		const services = new Map<string, Service>();
-		if (
-			workflowExporters.size > 0 ||
-			allWorkerOpts.some(
-				({ config }) => [...getEnvBindingsOfType(config, "workflow")].length > 0
-			)
-		) {
-			const { address } = await this.#getWorkflowStorageServer();
-			services.set(SERVICE_WORKFLOW_STORAGE, {
-				name: SERVICE_WORKFLOW_STORAGE,
-				external: {
-					address,
-					http: {
-						cfBlobHeader: CoreHeaders.CF_BLOB,
-						injectRequestHeaders: [
-							{
-								name: CoreHeaders.LOOPBACK_SECRET,
-								value: this.#loopbackSecret,
-							},
-						],
-					},
-				},
-			});
-		}
 		const extensions: Extension[] = [
 			{
 				modules: [
@@ -2506,13 +2515,30 @@ export class Miniflare {
 			this.#sharedOpts.unsafeEnableSharedStorage
 				? this.#sharedOpts.resourcePersistencePath
 				: undefined,
-			() =>
-				runtime.updateConfig(
+			async () => {
+				if (this.#workflowStoragePersistPath !== undefined) {
+					await runtime.dispose();
+					await recoverWorkflowStorage(
+						this.#workflowStoragePersistPath,
+						(error) => this.#log.error(error)
+					);
+				}
+				this.#workflowStoragePersistPath = config.services?.some(
+					({ name }) => name === SERVICE_WORKFLOW_STORAGE
+				)
+					? getPersistPath(
+							WORKFLOWS_PLUGIN_NAME,
+							this.#tmpPath,
+							this.#sharedOpts.isolatedResourcePersistencePath
+						)
+					: undefined;
+				return runtime.updateConfig(
 					configBuffer,
 					runtimeOpts,
 					this.#workerOpts.map((w) => w.config.name),
 					this.#disposeController.signal
-				)
+				);
+			}
 		);
 		if (this.#disposeController.signal.aborted) {
 			return;
@@ -3649,7 +3675,12 @@ export class Miniflare {
 		const runtimeCleanupOutcome = await runtimeDisposeOutcome;
 		this.#devRegistry.unregisterWorkers();
 		try {
-			await this.#workflowStorageServer?.dispose();
+			if (this.#workflowStoragePersistPath !== undefined) {
+				await recoverWorkflowStorage(
+					this.#workflowStoragePersistPath,
+					(error) => this.#log.error(error)
+				);
+			}
 		} catch (error) {
 			if (!independentCleanupFailed) {
 				independentCleanupFailed = true;

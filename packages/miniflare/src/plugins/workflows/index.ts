@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import SCRIPT_WORKFLOWS_BINDING from "worker:workflows/binding";
+import SCRIPT_WORKFLOWS_STORAGE from "worker:workflows/storage";
 import SCRIPT_WORKFLOWS_WRAPPED_BINDING from "worker:workflows/wrapped-binding";
 import { MiniflareCoreError } from "../../shared";
 import { CoreBindings } from "../../workers";
@@ -286,7 +287,6 @@ export const WORKFLOWS_PLUGIN: Plugin = {
 							name: "WORKFLOW_NAME",
 							json: JSON.stringify(binding.name),
 						},
-						// Workflow deletion needs the Node.js host to remove its SQLite files.
 						WORKER_BINDING_WORKFLOW_STORAGE,
 						...(stepLimit !== undefined
 							? [
@@ -303,6 +303,24 @@ export const WORKFLOWS_PLUGIN: Plugin = {
 			return workflowsBinding;
 		});
 
+		storageServices.push(
+			{
+				name: WORKFLOWS_STORAGE_SERVICE_NAME,
+				disk: { path: persistPath, writable: true },
+			},
+			{
+				name: SERVICE_WORKFLOW_STORAGE,
+				worker: {
+					compatibilityDate: "2024-10-22",
+					modules: [
+						{ name: "storage.worker.js", esModule: SCRIPT_WORKFLOWS_STORAGE() },
+					],
+					bindings: [
+						{ name: "DISK", service: { name: WORKFLOWS_STORAGE_SERVICE_NAME } },
+					],
+				},
+			}
+		);
 		if (exportedWorkflows.length === 0) {
 			return [...storageServices, ...services];
 		}

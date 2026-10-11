@@ -345,7 +345,7 @@ export async function getWorkflowDetails(
 
 /**
  * Delete all instances of a workflow by removing all .sqlite files
- * from the persistence directory via the loopback.
+ * from the persistence directory via the internal disk-backed storage service.
  */
 export async function deleteWorkflow(
 	c: AppContext,
@@ -361,14 +361,16 @@ export async function deleteWorkflow(
 		);
 	}
 
-	if (c.env.MINIFLARE_LOOPBACK === undefined) {
-		return errorResponse(500, 10001, "Loopback service not available");
+	if (c.env.MINIFLARE_WORKFLOW_STORAGE === undefined) {
+		return errorResponse(500, 10001, "Workflow storage service not available");
 	}
 
 	const encodedName = encodeURIComponent(workflowName);
 	const loopbackUrl = `http://localhost/core/workflow-storage/${encodedName}`;
 
-	await c.env.MINIFLARE_LOOPBACK.fetch(loopbackUrl, { method: "DELETE" });
+	await c.env.MINIFLARE_WORKFLOW_STORAGE.fetch(loopbackUrl, {
+		method: "DELETE",
+	});
 
 	statusCountsCache.delete(workflowName);
 
@@ -1074,8 +1076,8 @@ export async function deleteWorkflowInstance(
 		);
 	}
 
-	if (c.env.MINIFLARE_LOOPBACK === undefined) {
-		return errorResponse(500, 10001, "Loopback service not available");
+	if (c.env.MINIFLARE_WORKFLOW_STORAGE === undefined) {
+		return errorResponse(500, 10001, "Workflow storage service not available");
 	}
 
 	// Convert instance ID to hex DO ID.
@@ -1090,7 +1092,7 @@ export async function deleteWorkflowInstance(
 	const encodedHexId = encodeURIComponent(hexId);
 	const loopbackUrl = `http://localhost/core/workflow-storage/${encodedName}/${encodedHexId}`;
 
-	const response = await c.env.MINIFLARE_LOOPBACK.fetch(loopbackUrl, {
+	const response = await c.env.MINIFLARE_WORKFLOW_STORAGE.fetch(loopbackUrl, {
 		method: "DELETE",
 	});
 
