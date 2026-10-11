@@ -1644,9 +1644,9 @@ export class Miniflare {
 					req.headers[CoreHeaders.OP_SYNC.toLowerCase()] === "true" &&
 					response.headers.get(CoreHeaders.OP_RESULT_TYPE) === "ReadableStream"
 				) {
-					// A transferred stream can finish consumption in the sync-fetch
-					// worker before its Undici pool has retired the response socket.
-					// Don't let the next synchronous RPC reuse that socket.
+					// #writeResponse() copies response headers to writeHead(), so an
+					// explicit `Connection: keep-alive` would override this flag.
+					response.headers.set("Connection", "close");
 					res.shouldKeepAlive = false;
 				}
 				await this.#writeResponse(response, res);
