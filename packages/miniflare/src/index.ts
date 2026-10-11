@@ -1640,6 +1640,15 @@ export class Miniflare {
 				res.writeHead(404);
 				res.end();
 			} else {
+				if (
+					req.headers[CoreHeaders.OP_SYNC.toLowerCase()] === "true" &&
+					response.headers.get(CoreHeaders.OP_RESULT_TYPE) === "ReadableStream"
+				) {
+					// A transferred stream can finish consumption in the sync-fetch
+					// worker before its Undici pool has retired the response socket.
+					// Don't let the next synchronous RPC reuse that socket.
+					res.shouldKeepAlive = false;
+				}
 				await this.#writeResponse(response, res);
 			}
 		}
