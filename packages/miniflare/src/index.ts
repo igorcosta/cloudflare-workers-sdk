@@ -1640,15 +1640,6 @@ export class Miniflare {
 				res.writeHead(404);
 				res.end();
 			} else {
-				if (
-					req.headers[CoreHeaders.OP_SYNC.toLowerCase()] === "true" &&
-					response.headers.get(CoreHeaders.OP_RESULT_TYPE) === "ReadableStream"
-				) {
-					// #writeResponse() copies response headers to writeHead(), so an
-					// explicit `Connection: keep-alive` would override this flag.
-					response.headers.set("Connection", "close");
-					res.shouldKeepAlive = false;
-				}
 				await this.#writeResponse(response, res);
 			}
 		}
