@@ -1,9 +1,7 @@
 import fs from "node:fs/promises";
 import SCRIPT_WORKFLOWS_BINDING from "worker:workflows/binding";
-import SCRIPT_WORKFLOWS_STORAGE from "worker:workflows/storage";
 import SCRIPT_WORKFLOWS_WRAPPED_BINDING from "worker:workflows/wrapped-binding";
 import { MiniflareCoreError } from "../../shared";
-import { CoreBindings } from "../../workers";
 import {
 	getUserServiceName,
 	OBSERVABILITY_COLLECTOR_SERVICE_NAME,
@@ -17,17 +15,12 @@ import {
 	ProxyNodeBinding,
 	SERVICE_DEV_REGISTRY_PROXY,
 } from "../shared";
-import { SERVICE_WORKFLOW_STORAGE } from "./storage";
+import { WORKFLOW_STORAGE_BINDING } from "./storage";
 import type { Service, ServiceDesignator } from "../../runtime";
 import type { ParsedWorkerOptions, Plugin, WorkflowExporters } from "../shared";
 
 export const WORKFLOWS_PLUGIN_NAME = "workflows";
 export const WORKFLOWS_STORAGE_SERVICE_NAME = `${WORKFLOWS_PLUGIN_NAME}:storage`;
-
-const WORKER_BINDING_WORKFLOW_STORAGE = {
-	name: CoreBindings.SERVICE_LOOPBACK,
-	service: { name: SERVICE_WORKFLOW_STORAGE },
-};
 
 /** Service implementing the Workflow API for `env` and `ctx.exports`. */
 export function getWorkflowBindingServiceName(workflowName: string) {
@@ -292,7 +285,12 @@ export const WORKFLOWS_PLUGIN: Plugin = {
 							name: "WORKFLOW_NAME",
 							json: JSON.stringify(binding.name),
 						},
-						WORKER_BINDING_WORKFLOW_STORAGE,
+						{
+							name: WORKFLOW_STORAGE_BINDING,
+							service: {
+								name: `${WORKFLOWS_STORAGE_SERVICE_NAME}-${binding.name}`,
+							},
+						},
 						...(stepLimit !== undefined
 							? [
 									{
@@ -308,21 +306,6 @@ export const WORKFLOWS_PLUGIN: Plugin = {
 			return workflowsBinding;
 		});
 
-		storageServices.push({
-			name: SERVICE_WORKFLOW_STORAGE,
-			worker: {
-				compatibilityDate: "2024-10-22",
-				modules: [
-					{ name: "storage.worker.js", esModule: SCRIPT_WORKFLOWS_STORAGE() },
-				],
-				bindings: [
-					{
-						name: "DISK",
-						service: { name: workflowStorageServiceNames[0] },
-					},
-				],
-			},
-		});
 		if (exportedWorkflows.length === 0) {
 			return [...storageServices, ...services];
 		}
@@ -344,7 +327,10 @@ export const WORKFLOWS_PLUGIN: Plugin = {
 				...engineWorker,
 				...getStreamingTails(config.name),
 				bindings: [
-					WORKER_BINDING_WORKFLOW_STORAGE,
+					{
+						name: WORKFLOW_STORAGE_BINDING,
+						service: { name: workflowStorageServiceNames[0] },
+					},
 					{ name: "STEP_LIMITS", json: JSON.stringify(stepLimits) },
 				],
 			},
@@ -368,7 +354,12 @@ export const WORKFLOWS_PLUGIN: Plugin = {
 						},
 						{ name: "BINDING_NAME", json: JSON.stringify(className) },
 						{ name: "WORKFLOW_NAME", json: JSON.stringify(workflow.name) },
-						WORKER_BINDING_WORKFLOW_STORAGE,
+						{
+							name: WORKFLOW_STORAGE_BINDING,
+							service: {
+								name: `${WORKFLOWS_STORAGE_SERVICE_NAME}-${workflow.name}`,
+							},
+						},
 					],
 				},
 			})

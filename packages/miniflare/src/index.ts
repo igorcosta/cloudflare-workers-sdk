@@ -96,10 +96,8 @@ import {
 	cfImageLocalFetcher,
 	imagesLocalFetcher,
 } from "./plugins/images/fetcher";
-import {
-	recoverWorkflowStorage,
-	SERVICE_WORKFLOW_STORAGE,
-} from "./plugins/workflows/storage";
+import { WORKFLOWS_STORAGE_SERVICE_NAME } from "./plugins/workflows";
+import { recoverWorkflowStorage } from "./plugins/workflows/storage";
 import {
 	HttpOptions_Style,
 	kInspectorSocket,
@@ -2523,8 +2521,8 @@ export class Miniflare {
 						(error) => this.#log.error(error)
 					);
 				}
-				this.#workflowStoragePersistPath = config.services?.some(
-					({ name }) => name === SERVICE_WORKFLOW_STORAGE
+				this.#workflowStoragePersistPath = config.services?.some(({ name }) =>
+					name?.startsWith(`${WORKFLOWS_STORAGE_SERVICE_NAME}-`)
 				)
 					? getPersistPath(
 							WORKFLOWS_PLUGIN_NAME,

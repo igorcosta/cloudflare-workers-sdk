@@ -344,8 +344,7 @@ export async function getWorkflowDetails(
 }
 
 /**
- * Delete all instances of a workflow by removing all .sqlite files
- * from the persistence directory via the internal disk-backed storage service.
+ * Deletes a configured Workflow's persistence directory through native disk.
  */
 export async function deleteWorkflow(
 	c: AppContext,
@@ -364,28 +363,18 @@ export async function deleteWorkflow(
 	if (c.env.MINIFLARE_WORKFLOW_STORAGE === undefined) {
 		return errorResponse(500, 10001, "Workflow storage service not available");
 	}
-	if (c.env.MINIFLARE_LOOPBACK === undefined) {
-		return errorResponse(500, 10001, "Loopback service not available");
+	if (/[\\/]/.test(workflowName) || workflowName.includes("\0")) {
+		return errorResponse(500, 10001, "Invalid workflow storage path");
 	}
-
-	const encodedName = encodeURIComponent(workflowName);
-	const loopbackUrl = `http://localhost/core/workflow-storage/${encodedName}`;
-	// Native disk directory reads fail on Windows, and disk DELETE is recursive.
-	// List through Node so the storage service only receives file names to remove.
-	const listing = await c.env.MINIFLARE_LOOPBACK.fetch(loopbackUrl);
-	if (!listing.ok && listing.status !== 404) {
-		return errorResponse(500, 10001, "Failed to read workflow storage");
+	const response = await c.env.MINIFLARE_WORKFLOW_STORAGE.fetch(
+		`http://disk/${encodeURIComponent(`miniflare-workflows-${workflowName}`)}`,
+		{
+			method: "DELETE",
+		}
+	);
+	if (!response.ok && response.status !== 404) {
+		return errorResponse(500, 10001, "Failed to delete workflow storage");
 	}
-	const entries: DirectoryEntry[] = listing.ok ? await listing.json() : [];
-
-	await c.env.MINIFLARE_WORKFLOW_STORAGE.fetch(loopbackUrl, {
-		method: "DELETE",
-		body: JSON.stringify(
-			entries
-				.filter((entry) => entry.type === "file")
-				.map((entry) => entry.name)
-		),
-	});
 
 	statusCountsCache.delete(workflowName);
 
@@ -1061,8 +1050,7 @@ export async function deleteWorkflowInstances(
 /**
  * Delete a workflow instance by removing its .sqlite persistence files.
  *
- * Converts the instance ID to a hex DO ID via idFromName(), then calls the
- * loopback to delete the .sqlite (and -shm/-wal) files from disk.
+ * Uses the binding's cleanup queue so deletion cannot race instance recreation.
  */
 export async function deleteWorkflowInstance(
 	c: AppContext,
@@ -1091,8 +1079,13 @@ export async function deleteWorkflowInstance(
 		);
 	}
 
-	if (c.env.MINIFLARE_WORKFLOW_STORAGE === undefined) {
-		return errorResponse(500, 10001, "Workflow storage service not available");
+	const workflow = getWorkflowBinding(c.env, workflowName) as
+		| (Workflow & {
+				unsafeDeletePersistedInstance(hexId: string): Promise<boolean>;
+		  })
+		| null;
+	if (workflow === null) {
+		return errorResponse(500, 10001, "Workflow binding not available");
 	}
 
 	// Convert instance ID to hex DO ID.
@@ -1103,22 +1096,15 @@ export async function deleteWorkflowInstance(
 		? instanceId
 		: engineNamespace.idFromName(instanceId).toString();
 
-	const encodedName = encodeURIComponent(workflowName);
-	const encodedHexId = encodeURIComponent(hexId);
-	const loopbackUrl = `http://localhost/core/workflow-storage/${encodedName}/${encodedHexId}`;
-
-	const response = await c.env.MINIFLARE_WORKFLOW_STORAGE.fetch(loopbackUrl, {
-		method: "DELETE",
-	});
-
-	if (!response.ok) {
-		if (response.status === 404) {
+	try {
+		if (!(await workflow.unsafeDeletePersistedInstance(hexId))) {
 			return errorResponse(
 				404,
 				WORKFLOW_ERROR_NOT_FOUND,
 				`Workflow instance '${instanceId}' not found.`
 			);
 		}
+	} catch {
 		return errorResponse(500, 10001, "Failed to delete instance");
 	}
 

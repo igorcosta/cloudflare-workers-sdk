@@ -15,6 +15,10 @@ import {
 	isValidAddressableWorkflowInstanceId,
 	isValidWorkflowInstanceId,
 } from "./lib/validators";
+import {
+	deleteWorkflowStorage,
+	waitForWorkflowStorageDeletion,
+} from "./miniflare-storage";
 import { parseWorkflowSubscriptionOptions } from "./subscription";
 import type {
 	DatabaseInstance,
@@ -38,50 +42,43 @@ type Env = {
 	ENGINE: DurableObjectNamespace<Engine>;
 	BINDING_NAME: string;
 	WORKFLOW_NAME: string;
-	MINIFLARE_LOOPBACK?: Fetcher;
+	MINIFLARE_WORKFLOW_STORAGE?: Fetcher;
 };
 
 /** Waits for Miniflare to finish deleting an instance's persistence files. */
 async function waitForPersistedInstanceDelete(
 	env: Env,
+	ctx: ExecutionContext,
 	id: string | undefined
 ): Promise<void> {
-	if (id === undefined || env.MINIFLARE_LOOPBACK === undefined) {
+	if (id === undefined || env.MINIFLARE_WORKFLOW_STORAGE === undefined) {
 		return;
 	}
 
 	const hexId = env.ENGINE.idFromName(id).toString();
-	const response = await env.MINIFLARE_LOOPBACK.fetch(
-		`http://localhost/core/workflow-storage/${encodeURIComponent(env.WORKFLOW_NAME)}/${hexId}?waitForPendingDelete=1`
-	);
-	if (!response.ok) {
-		throw new Error(
-			`Failed to wait for persisted workflow instance '${id}' deletion`
-		);
-	}
+	await waitForWorkflowStorageDeletion(env, ctx, hexId, async () => {
+		try {
+			await env.ENGINE.get(env.ENGINE.idFromName(id)).unsafeAbort();
+		} catch {}
+	});
 }
 
 /** Aborts an Engine object before removing its persistence files. */
-async function deletePersistedInstance(env: Env, id: string): Promise<void> {
-	if (env.MINIFLARE_LOOPBACK === undefined) {
+async function deletePersistedInstance(
+	env: Env,
+	ctx: ExecutionContext,
+	id: string
+): Promise<void> {
+	if (env.MINIFLARE_WORKFLOW_STORAGE === undefined) {
 		return;
 	}
 
 	const stub = env.ENGINE.get(env.ENGINE.idFromName(id));
-	try {
-		await stub.unsafeAbort();
-	} catch {
-		// Aborting the Durable Object rejects its RPC.
-	}
-
-	const response = await env.MINIFLARE_LOOPBACK.fetch(
-		`http://localhost/core/workflow-storage/${encodeURIComponent(env.WORKFLOW_NAME)}/${stub.id.toString()}?defer=1`,
-		{ method: "DELETE" }
-	);
-	if (!response.ok) {
-		throw new Error(`Failed to delete persisted workflow instance '${id}'`);
-	}
-	await waitForPersistedInstanceDelete(env, id);
+	await deleteWorkflowStorage(env, ctx, stub.id.toString(), async () => {
+		try {
+			await stub.unsafeAbort();
+		} catch {}
+	});
 }
 
 type WorkflowIntrospectionSession = {
@@ -272,7 +269,7 @@ export class WorkflowBinding extends WorkerEntrypoint<Env> {
 
 	async #instanceExists(id: string): Promise<boolean> {
 		// Avoid recreating the engine while its previous persistence is being deleted.
-		await waitForPersistedInstanceDelete(this.env, id);
+		await waitForPersistedInstanceDelete(this.env, this.ctx, id);
 		const stub = this.env.ENGINE.get(this.env.ENGINE.idFromName(id));
 		return await stub.hasInstance();
 	}
@@ -310,7 +307,7 @@ export class WorkflowBinding extends WorkerEntrypoint<Env> {
 	): Promise<{ id: string }> {
 		const { params = {} } = options;
 		if (options.id === undefined) {
-			await waitForPersistedInstanceDelete(this.env, id);
+			await waitForPersistedInstanceDelete(this.env, this.ctx, id);
 		}
 		const stubId = this.env.ENGINE.idFromName(id);
 		const stub = this.env.ENGINE.get(stubId);
@@ -373,7 +370,9 @@ export class WorkflowBinding extends WorkerEntrypoint<Env> {
 		// Pass a getter function so WorkflowHandle can get a fresh stub after abort
 		const getStub = () => this.env.ENGINE.get(this.env.ENGINE.idFromName(id));
 
-		const handle = new WorkflowHandle(id, stub, getStub);
+		const handle = new WorkflowHandle(id, stub, getStub, () =>
+			this.deleteInstance(id)
+		);
 
 		try {
 			await handle.status();
@@ -593,15 +592,33 @@ export class WorkflowBinding extends WorkerEntrypoint<Env> {
 		}
 
 		const stub = this.env.ENGINE.get(this.env.ENGINE.idFromName(id));
-		try {
-			await stub.deleteInstance();
-		} catch (error) {
-			// delete aborts the instance
-			if (!isUserTriggeredDelete(error)) {
-				throw error;
+		await deleteWorkflowStorage(
+			this.env,
+			this.ctx,
+			stub.id.toString(),
+			async () => {
+				try {
+					await stub.deleteInstance();
+				} catch (error) {
+					if (!isUserTriggeredDelete(error)) {
+						throw error;
+					}
+				}
 			}
+		);
+	}
+
+	/** Removes local persistence by hex ID, including orphaned instances in Explorer. */
+	public async unsafeDeletePersistedInstance(hexId: string): Promise<boolean> {
+		if (this.env.MINIFLARE_WORKFLOW_STORAGE === undefined) {
+			throw new Error("Workflow storage service not available");
 		}
-		await waitForPersistedInstanceDelete(this.env, id);
+		return deleteWorkflowStorage(this.env, this.ctx, hexId, async () => {
+			try {
+				const stub = this.env.ENGINE.get(this.env.ENGINE.idFromString(hexId));
+				await stub.unsafeAbort();
+			} catch {}
+		});
 	}
 
 	/** Deletes each unique instance once while preserving duplicate results. */
@@ -669,7 +686,7 @@ export class WorkflowBinding extends WorkerEntrypoint<Env> {
 		);
 		const cleanupIds = [...missingIds];
 		const cleanups = await Promise.allSettled(
-			cleanupIds.map((id) => deletePersistedInstance(this.env, id))
+			cleanupIds.map((id) => deletePersistedInstance(this.env, this.ctx, id))
 		);
 		const failedCleanupIds = new Set(
 			cleanupIds.filter((_, index) => cleanups[index]?.status === "rejected")
@@ -796,7 +813,8 @@ export class WorkflowHandle extends RpcTarget implements WorkflowInstance {
 	constructor(
 		public id: string,
 		stub: DurableObjectStub<Engine>,
-		private getStub: () => DurableObjectStub<Engine>
+		private getStub: () => DurableObjectStub<Engine>,
+		private deleteCallback: () => Promise<void>
 	) {
 		super();
 		this.stub = stub;
@@ -831,14 +849,7 @@ export class WorkflowHandle extends RpcTarget implements WorkflowInstance {
 	}
 
 	public async delete(): Promise<void> {
-		try {
-			await this.stub.deleteInstance();
-		} catch (e) {
-			// delete aborts the instance
-			if (!isUserTriggeredDelete(e)) {
-				throw e;
-			}
-		}
+		await this.deleteCallback();
 	}
 
 	public async restart(

@@ -45,6 +45,7 @@ import {
 	StreamOutputState,
 } from "./lib/streams";
 import { TimePriorityQueue } from "./lib/timePriorityQueue";
+import { markWorkflowStorageDeletion } from "./miniflare-storage";
 import { MODIFIER_KEYS, WorkflowInstanceModifier } from "./modifier";
 import {
 	isTerminalEvent,
@@ -76,7 +77,7 @@ import type {
 interface Env {
 	ENGINE: DurableObjectNamespace<Engine>;
 	USER_WORKFLOW: WorkflowEntrypoint;
-	MINIFLARE_LOOPBACK?: Fetcher;
+	MINIFLARE_WORKFLOW_STORAGE?: Fetcher;
 	WORKFLOW_NAME?: string;
 	STEP_LIMIT?: string; // JSON-encoded number from miniflare binding
 	STEP_LIMITS?: Record<string, number>;
@@ -1480,26 +1481,14 @@ export class Engine extends DurableObject<Env, EngineProps> {
 			);
 		}
 
-		await this.ctx.storage.deleteAll();
-
 		const workflowName = this.ctx.props.workflowName ?? this.env.WORKFLOW_NAME;
-		if (
-			this.env.MINIFLARE_LOOPBACK !== undefined &&
-			workflowName !== undefined
-		) {
-			try {
-				const response = await this.env.MINIFLARE_LOOPBACK.fetch(
-					`http://localhost/core/workflow-storage/${encodeURIComponent(workflowName)}/${this.ctx.id.toString()}?defer=1`,
-					{ method: "DELETE" }
-				);
-				if (!response.ok && response.status !== 404) {
-					console.error("Failed to delete persisted workflow instance");
-				}
-			} catch (error) {
-				console.error("Failed to delete persisted workflow instance", error);
-			}
+		if (workflowName !== undefined) {
+			await markWorkflowStorageDeletion(
+				{ ...this.env, WORKFLOW_NAME: workflowName },
+				this.ctx.id.toString()
+			);
 		}
-
+		await this.ctx.storage.deleteAll();
 		await this.abort(ABORT_REASONS.USER_DELETE);
 	}
 

@@ -3,7 +3,6 @@ import path from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
 import { isFileNotFoundError } from "../../shared/error";
 
-export const SERVICE_WORKFLOW_STORAGE = "workflows:storage-cleanup";
 export const WORKFLOW_STORAGE_BINDING = "MINIFLARE_WORKFLOW_STORAGE";
 
 /** Finishes marked deletions after workerd exits, before its storage is reused. */

@@ -25,11 +25,9 @@ import {
 	getWorkflowBindingServiceName,
 	getWorkflowNamespaceKey,
 	WORKFLOWS_PLUGIN_NAME,
+	WORKFLOWS_STORAGE_SERVICE_NAME,
 } from "../workflows";
-import {
-	SERVICE_WORKFLOW_STORAGE,
-	WORKFLOW_STORAGE_BINDING,
-} from "../workflows/storage";
+import { WORKFLOW_STORAGE_BINDING } from "../workflows/storage";
 import {
 	EMAIL_STORE_SERVICE_NAME,
 	getUserServiceName,
@@ -102,10 +100,13 @@ export function getExplorerServices(
 			: [
 					{
 						name: WORKFLOW_STORAGE_BINDING,
-						service: { name: SERVICE_WORKFLOW_STORAGE },
+						service: {
+							name: `${WORKFLOWS_STORAGE_SERVICE_NAME}-${Object.keys(bindingIdMap.workflows)[0]}`,
+						},
 					},
 				]),
-		// Reuse configured Workflow namespace proxies in the Local Explorer.
+		// Workflow creation still uses the configured binding API. D1, KV and R2
+		// operations use the dedicated internal storage service bindings below.
 		...workflowProxyBindings,
 		{
 			name: CoreBindings.JSON_LOCAL_EXPLORER_BINDING_MAP,
