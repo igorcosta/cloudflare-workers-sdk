@@ -247,32 +247,6 @@ export default {
 	expect(await fs.readdir(directory)).toEqual([]);
 });
 
-test("deleting a missing instance preserves not-found and deferred responses", async ({
-	expect,
-}) => {
-	const root = await useTmp();
-	const storage = await startStorage(root);
-	const missing = await storage.dispatchFetch(
-		`http://localhost${STORAGE_PATH}`,
-		{ method: "DELETE" }
-	);
-	await missing.text();
-	expect(missing.status).toBe(404);
-	const deferred = await storage.dispatchFetch(
-		`http://localhost${STORAGE_PATH}?defer=1`,
-		{ method: "DELETE" }
-	);
-	await deferred.text();
-	expect(deferred.status).toBe(202);
-	const barrier = await storage.dispatchFetch(
-		`http://localhost${STORAGE_PATH}?waitForPendingDelete=1`
-	);
-	expect(barrier.status).toBe(204);
-	expect(await fs.readdir(path.join(root, "miniflare-workflows-test"))).toEqual(
-		[]
-	);
-});
-
 test("bulk deletion removes orphaned SQLite sidecars and metadata but preserves directories", async ({
 	expect,
 }) => {

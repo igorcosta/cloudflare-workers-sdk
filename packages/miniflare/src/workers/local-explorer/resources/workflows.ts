@@ -370,6 +370,8 @@ export async function deleteWorkflow(
 
 	const encodedName = encodeURIComponent(workflowName);
 	const loopbackUrl = `http://localhost/core/workflow-storage/${encodedName}`;
+	// Native disk directory reads fail on Windows, and disk DELETE is recursive.
+	// List through Node so the storage service only receives file names to remove.
 	const listing = await c.env.MINIFLARE_LOOPBACK.fetch(loopbackUrl);
 	if (!listing.ok && listing.status !== 404) {
 		return errorResponse(500, 10001, "Failed to read workflow storage");

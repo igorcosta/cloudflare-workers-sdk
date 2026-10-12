@@ -223,6 +223,11 @@ describe("getPlatformProxy()", () => {
 					"src/index.ts": dedent /* javascript */ `
 							import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 
+							class ResultTarget extends RpcTarget {
+								get value() { return "target value"; }
+								getValue() { return this.value; }
+							}
+
 							export default {
 								async fetch(request: Request, env: Record<string, unknown>, ctx: unknown) {
 									throw new Error(
@@ -252,6 +257,16 @@ describe("getPlatformProxy()", () => {
 								getCounter() {
 									return new Counter();
 								}
+
+								echo(value: unknown) { return value; }
+								fail() { throw new Error("rpc failure"); }
+								async reject() {
+									await Promise.resolve();
+									throw new Error("rpc rejection");
+								}
+								stream() { return new Response("stream body").body; }
+								target() { return new ResultTarget(); }
+								nestedCallable() { return () => () => "nested function value"; }
 
 								getHelloWorldFn() {
 									return () => "Hello World!";
@@ -353,19 +368,35 @@ describe("getPlatformProxy()", () => {
 				expect,
 			}) => {
 				await expect(
-					runInNode(/* javascript */ `(() => {
-						const sum = env.WORKER.sum([1, 2, 3]);
+					runInNode(/* javascript */ `await (async () => {
+						const streamed = await new Response(env.WORKER.stream()).text();
+						const values = [undefined, null, "value", 123, { value: [1, 2] }];
+						const echoes = values.map((value) => {
+							const result = env.WORKER.echo(value);
+							return { isPromise: result instanceof Promise, result };
+						});
+						const errorMessage = (call) => {
+							try { call(); } catch (error) { return error.message; }
+						};
+						const target = env.WORKER.target();
 						const firstCounter = env.WORKER.getCounter();
 						const secondCounter = env.WORKER.getCounter();
 						return JSON.stringify({
-							sum,
+							streamed,
+							echoes,
+							sum: env.WORKER.sum([1, 2, 3]),
+							syncError: errorMessage(() => env.WORKER.fail()),
+							rejection: errorMessage(() => env.WORKER.reject()),
+							targetValue: target.value,
+							targetMethod: target.getValue(),
+							nestedCallable: env.WORKER.nestedCallable()()(),
 							firstValue: firstCounter.increment(4),
 							secondValue: secondCounter.value,
 							distinct: firstCounter !== secondCounter,
 						});
 					})()`)
 				).resolves.toBe(
-					'{"sum":6,"firstValue":4,"secondValue":0,"distinct":true}\n'
+					'{"streamed":"stream body","echoes":[{"isPromise":false},{"isPromise":false,"result":null},{"isPromise":false,"result":"value"},{"isPromise":false,"result":123},{"isPromise":false,"result":{"value":[1,2]}}],"sum":6,"syncError":"rpc failure","rejection":"rpc rejection","targetValue":"target value","targetMethod":"target value","nestedCallable":"nested function value","firstValue":4,"secondValue":0,"distinct":true}\n'
 				);
 			});
 			it("can obtain and interact with returned functions", async ({

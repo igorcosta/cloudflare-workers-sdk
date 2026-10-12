@@ -105,8 +105,7 @@ export function getExplorerServices(
 						service: { name: SERVICE_WORKFLOW_STORAGE },
 					},
 				]),
-		// Workflow creation still uses the configured binding API. D1, KV and R2
-		// operations use the dedicated internal storage service bindings below.
+		// Reuse configured Workflow namespace proxies in the Local Explorer.
 		...workflowProxyBindings,
 		{
 			name: CoreBindings.JSON_LOCAL_EXPLORER_BINDING_MAP,

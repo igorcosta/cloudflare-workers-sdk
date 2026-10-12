@@ -183,13 +183,18 @@ export const WORKFLOWS_PLUGIN: Plugin = {
 		);
 		await fs.mkdir(persistPath, { recursive: true });
 		// each workflow should get its own storage service
-		const storageServices: Service[] = [
+		const workflowStorageServiceNames = [
 			...workflows.map(([, binding]) => binding.name),
 			...exportedWorkflows.map(([, workflow]) => workflow.name),
-		].map<Service>((workflowName) => ({
-			name: `${WORKFLOWS_STORAGE_SERVICE_NAME}-${workflowName}`,
-			disk: { path: persistPath, writable: true },
-		}));
+		].map(
+			(workflowName) => `${WORKFLOWS_STORAGE_SERVICE_NAME}-${workflowName}`
+		);
+		const storageServices: Service[] = workflowStorageServiceNames.map(
+			(name) => ({
+				name,
+				disk: { path: persistPath, writable: true },
+			})
+		);
 
 		// The engine service is built here, not through the core plugin's
 		// per-user-worker path, so tail it explicitly or workflow invocations are
@@ -303,24 +308,21 @@ export const WORKFLOWS_PLUGIN: Plugin = {
 			return workflowsBinding;
 		});
 
-		storageServices.push(
-			{
-				name: WORKFLOWS_STORAGE_SERVICE_NAME,
-				disk: { path: persistPath, writable: true },
+		storageServices.push({
+			name: SERVICE_WORKFLOW_STORAGE,
+			worker: {
+				compatibilityDate: "2024-10-22",
+				modules: [
+					{ name: "storage.worker.js", esModule: SCRIPT_WORKFLOWS_STORAGE() },
+				],
+				bindings: [
+					{
+						name: "DISK",
+						service: { name: workflowStorageServiceNames[0] },
+					},
+				],
 			},
-			{
-				name: SERVICE_WORKFLOW_STORAGE,
-				worker: {
-					compatibilityDate: "2024-10-22",
-					modules: [
-						{ name: "storage.worker.js", esModule: SCRIPT_WORKFLOWS_STORAGE() },
-					],
-					bindings: [
-						{ name: "DISK", service: { name: WORKFLOWS_STORAGE_SERVICE_NAME } },
-					],
-				},
-			}
-		);
+		});
 		if (exportedWorkflows.length === 0) {
 			return [...storageServices, ...services];
 		}
