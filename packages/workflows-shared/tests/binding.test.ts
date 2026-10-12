@@ -134,7 +134,7 @@ describe("WorkflowBinding", () => {
 					ENGINE: env.ENGINE,
 					BINDING_NAME: "TEST_WORKFLOW",
 					WORKFLOW_NAME: "test-workflow",
-					MINIFLARE_LOOPBACK: {
+					MINIFLARE_WORKFLOW_STORAGE: {
 						fetch: () => Promise.resolve(new Response(null, { status: 500 })),
 					} as unknown as Fetcher,
 				});
@@ -143,9 +143,7 @@ describe("WorkflowBinding", () => {
 					method === "create"
 						? binding.create({ id: "cleanup-failed" })
 						: binding.createBatch([{ id: "cleanup-failed" }])
-				).rejects.toThrow(
-					"Failed to wait for persisted workflow instance 'cleanup-failed' deletion"
-				);
+				).rejects.toThrow("Failed to inspect pending Workflow deletion");
 			});
 		}
 	});
@@ -317,8 +315,8 @@ describe("WorkflowBinding", () => {
 				.mockRejectedValue(new Error("sensitive failure"));
 			const binding = new WorkflowBinding(createExecutionContext(), {
 				ENGINE: {
-					idFromName: (id: string) => id,
-					get: () => ({ deleteInstance }),
+					idFromName: (id: string) => env.ENGINE.idFromName(id),
+					get: (id: DurableObjectId) => ({ id, deleteInstance }),
 				} as unknown as DurableObjectNamespace<Engine>,
 				BINDING_NAME: "TEST_WORKFLOW",
 				WORKFLOW_NAME: "test-workflow",
@@ -345,20 +343,33 @@ describe("WorkflowBinding", () => {
 			const abort = vi.fn(() =>
 				Promise.reject(new Error("Durable Object aborted"))
 			);
-			const loopbackFetch = vi.fn((url: string) =>
+			const cleanupFailedId =
+				env.ENGINE.idFromName("cleanup-failed").toString();
+			const missingId = env.ENGINE.idFromName("missing").toString();
+			const ctx = createExecutionContext();
+			const backgroundTasks: Promise<unknown>[] = [];
+			vi.spyOn(ctx, "waitUntil").mockImplementation((promise) => {
+				backgroundTasks.push(promise.catch((error: unknown) => error));
+			});
+			const diskFetch = vi.fn((url: string, init?: RequestInit) =>
 				Promise.resolve(
 					new Response(null, {
-						status: url.includes("/cleanup-failed") ? 500 : 204,
+						status:
+							init?.method === "HEAD"
+								? 404
+								: url.includes(cleanupFailedId)
+									? 500
+									: 204,
 					})
 				)
 			);
-			const binding = new WorkflowBinding(createExecutionContext(), {
+			const binding = new WorkflowBinding(ctx, {
 				ENGINE: {
-					idFromName: (id: string) => ({ toString: () => id }),
-					get: (id: { toString(): string }) => ({
+					idFromName: (id: string) => env.ENGINE.idFromName(id),
+					get: (id: DurableObjectId) => ({
 						id,
 						deleteInstance: () => {
-							if (id.toString() === "missing") {
+							if (id.toString() === missingId) {
 								return Promise.reject(
 									new Error("(instance.not_found) Instance does not exist")
 								);
@@ -370,7 +381,7 @@ describe("WorkflowBinding", () => {
 				} as unknown as DurableObjectNamespace<Engine>,
 				BINDING_NAME: "TEST_WORKFLOW",
 				WORKFLOW_NAME: "test-workflow",
-				MINIFLARE_LOOPBACK: { fetch: loopbackFetch } as unknown as Fetcher,
+				MINIFLARE_WORKFLOW_STORAGE: { fetch: diskFetch } as unknown as Fetcher,
 			});
 
 			await expect(
@@ -398,12 +409,11 @@ describe("WorkflowBinding", () => {
 				],
 			});
 			expect(abort).toHaveBeenCalledOnce();
-			expect(loopbackFetch.mock.calls.map(([url]) => url)).toEqual(
-				expect.arrayContaining([
-					expect.stringContaining("/missing?defer=1"),
-					expect.stringContaining("/missing?waitForPendingDelete=1"),
-				])
+			expect(diskFetch).toHaveBeenCalledWith(
+				`http://disk/miniflare-workflows-test-workflow/${missingId}.sqlite-delete`,
+				{ method: "PUT", body: "" }
 			);
+			await Promise.all(backgroundTasks);
 		});
 
 		it("should reject invalid batches", async ({ expect }) => {
@@ -760,11 +770,11 @@ describe("WorkflowBinding", () => {
 				ENGINE: env.ENGINE,
 				BINDING_NAME: "TEST_WORKFLOW",
 				WORKFLOW_NAME: "test-workflow",
-				MINIFLARE_LOOPBACK: {
+				MINIFLARE_WORKFLOW_STORAGE: {
 					fetch: () => Promise.resolve(new Response(null, { status: 500 })),
 				} as unknown as Fetcher,
 			});
-			const deletionError = `Failed to wait for persisted workflow instance '${id}' deletion`;
+			const deletionError = "Failed to inspect pending Workflow deletion";
 
 			await expect(binding.createBatch([{ id }])).rejects.toThrow(
 				deletionError
@@ -782,36 +792,36 @@ describe("WorkflowBinding", () => {
 		}) => {
 			const first = uniqueId("batch-pending-delete");
 			const second = uniqueId("batch-pending-delete");
-			const loopbackFetch = vi.fn((_url: string) =>
-				Promise.resolve(new Response(null, { status: 204 }))
+			const diskFetch = vi.fn((_url: string) =>
+				Promise.resolve(new Response(null, { status: 404 }))
 			);
 			const binding = new WorkflowBinding(createExecutionContext(), {
 				ENGINE: env.ENGINE,
 				BINDING_NAME: "TEST_WORKFLOW",
 				WORKFLOW_NAME: "test-workflow",
-				MINIFLARE_LOOPBACK: { fetch: loopbackFetch } as unknown as Fetcher,
+				MINIFLARE_WORKFLOW_STORAGE: { fetch: diskFetch } as unknown as Fetcher,
 			});
 			setTestWorkflowCallback(async () => "done");
 
 			const explicit = await binding.createBatch({
 				instances: [{ id: first }, { id: second }, { id: first }],
 			});
-			expect(loopbackFetch.mock.calls.map(([url]) => url).sort()).toEqual(
+			expect(diskFetch.mock.calls.map(([url]) => url).sort()).toEqual(
 				[first, second]
 					.map(
 						(id) =>
-							`http://localhost/core/workflow-storage/test-workflow/${env.ENGINE.idFromName(id).toString()}?waitForPendingDelete=1`
+							`http://disk/miniflare-workflows-test-workflow/${env.ENGINE.idFromName(id).toString()}.sqlite-delete`
 					)
 					.sort()
 			);
 
-			loopbackFetch.mockClear();
+			diskFetch.mockClear();
 			const counted = await binding.createBatch({ count: 2 });
-			expect(loopbackFetch.mock.calls.map(([url]) => url).sort()).toEqual(
+			expect(diskFetch.mock.calls.map(([url]) => url).sort()).toEqual(
 				counted.created
 					.map(
 						({ id }) =>
-							`http://localhost/core/workflow-storage/test-workflow/${env.ENGINE.idFromName(id).toString()}?waitForPendingDelete=1`
+							`http://disk/miniflare-workflows-test-workflow/${env.ENGINE.idFromName(id).toString()}.sqlite-delete`
 					)
 					.sort()
 			);
