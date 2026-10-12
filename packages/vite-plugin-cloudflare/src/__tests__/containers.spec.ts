@@ -174,6 +174,7 @@ test("prepares registry images with their owning Worker configuration", async ({
 		dockerPath: "docker",
 		containerOptionsByWorker,
 		logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+		cliDisplayName: "Wrangler",
 	});
 
 	expect(preparations).toEqual([
@@ -201,6 +202,7 @@ test("prepares the sidecar for a configured Worker without images or registry cr
 		dockerPath: "test-docker",
 		containerOptionsByWorker: new Map([[{}, []]]),
 		logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+		cliDisplayName: "Wrangler",
 	});
 	expect(prepareContainerImagesForDev).toHaveBeenCalledExactlyOnceWith(
 		expect.objectContaining({
@@ -209,6 +211,40 @@ test("prepares the sidecar for a configured Worker without images or registry cr
 		})
 	);
 	expect(OpenAPI.BASE).toBe("");
+});
+
+test("uses the Wrangler registry configuration command by default", async ({
+	expect,
+}) => {
+	await prepareContainerImagesForVite({
+		dockerPath: "test-docker",
+		containerOptionsByWorker: new Map([[{}, []]]),
+		logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+		cliDisplayName: "Wrangler",
+	});
+
+	expect(prepareContainerImagesForDev).toHaveBeenCalledExactlyOnceWith(
+		expect.objectContaining({
+			registryConfigureCommand: "wrangler containers registries configure",
+		})
+	);
+});
+
+test("uses the cf registry configuration command for cf", async ({
+	expect,
+}) => {
+	await prepareContainerImagesForVite({
+		dockerPath: "test-docker",
+		containerOptionsByWorker: new Map([[{}, []]]),
+		logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+		cliDisplayName: "cf",
+	});
+
+	expect(prepareContainerImagesForDev).toHaveBeenCalledExactlyOnceWith(
+		expect.objectContaining({
+			registryConfigureCommand: "cf containers registries create",
+		})
+	);
 });
 
 describe("Container image planning", () => {

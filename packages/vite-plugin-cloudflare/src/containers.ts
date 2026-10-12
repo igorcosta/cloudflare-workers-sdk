@@ -6,6 +6,7 @@ import {
 } from "@cloudflare/containers-shared";
 import {
 	COMPLIANCE_REGION_CONFIG_UNKNOWN,
+	configFileName,
 	getCloudflareApiBaseUrl,
 	UserError,
 } from "@cloudflare/workers-utils";
@@ -15,7 +16,10 @@ import type {
 } from "@cloudflare/containers-shared";
 import type { ComplianceConfig } from "@cloudflare/workers-utils";
 
-type ContainerWorkerConfig = ComplianceConfig & { account_id?: string };
+type ContainerWorkerConfig = ComplianceConfig & {
+	account_id?: string;
+	configPath?: string;
+};
 
 /**
  * Configures the Containers API client used to retrieve image pull credentials.
@@ -80,6 +84,7 @@ export async function prepareContainerImagesForVite(args: {
 	dockerPath: string;
 	containerOptionsByWorker: ContainerOptionsByWorker;
 	logger: ViteLogger;
+	cliDisplayName: string;
 }): Promise<void> {
 	for (const [workerConfig, plannedOptions] of args.containerOptionsByWorker) {
 		let containerOptions = plannedOptions;
@@ -119,6 +124,13 @@ export async function prepareContainerImagesForVite(args: {
 			onContainerImagePreparationEnd: () => {},
 			logger: args.logger,
 			complianceConfig: workerConfig,
+			configFileName: configFileName(workerConfig.configPath),
+			// Note: The Vite plugin should not include these hardcoded wrangler and cf commands.
+			// TODO: Remove these hardcoded value when possible.
+			registryConfigureCommand:
+				args.cliDisplayName === "cf"
+					? "cf containers registries create"
+					: "wrangler containers registries configure",
 		});
 	}
 }
