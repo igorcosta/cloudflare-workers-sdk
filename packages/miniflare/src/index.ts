@@ -1320,8 +1320,11 @@ export class Miniflare {
 		}
 	}
 
-	/** Lists Workflow storage with creation times for the Local Explorer. */
-	async #handleLoopbackWorkflowStorageRequest(url: URL): Promise<Response> {
+	/** Lists Workflow creation times and handles Local Explorer bulk cleanup. */
+	async #handleLoopbackWorkflowStorageRequest(
+		url: URL,
+		method: string
+	): Promise<Response> {
 		const workflowName = decodeURIComponent(
 			url.pathname.slice("/core/workflow-storage/".length)
 		);
@@ -1342,6 +1345,24 @@ export class Miniflare {
 			const entries = await fs.promises.readdir(namespacePath, {
 				withFileTypes: true,
 			});
+			if (method === "DELETE") {
+				await Promise.all(
+					entries
+						.filter(
+							(entry) =>
+								entry.isFile() &&
+								[".sqlite", ".sqlite-shm", ".sqlite-wal"].some((extension) =>
+									entry.name.endsWith(extension)
+								)
+						)
+						.map((entry) =>
+							fs.promises
+								.unlink(path.join(namespacePath, entry.name))
+								.catch(() => {})
+						)
+				);
+				return new Response("OK", { status: 200 });
+			}
 			return Response.json(
 				await Promise.all(
 					entries.map(async (entry) => {
@@ -1363,7 +1384,9 @@ export class Miniflare {
 			);
 		} catch (error) {
 			if (isFileNotFoundError(error)) {
-				return new Response("Not Found", { status: 404 });
+				return new Response(method === "DELETE" ? "OK" : "Not Found", {
+					status: method === "DELETE" ? 200 : 404,
+				});
 			}
 			throw error;
 		}
@@ -1589,8 +1612,11 @@ export class Miniflare {
 				response = await this.#handleLoopbackDOStorageRequest(url);
 			} else if (url.pathname.startsWith("/core/workflow-storage/")) {
 				response =
-					request.method === "GET"
-						? await this.#handleLoopbackWorkflowStorageRequest(url)
+					request.method === "GET" || request.method === "DELETE"
+						? await this.#handleLoopbackWorkflowStorageRequest(
+								url,
+								request.method
+							)
 						: new Response("Method Not Allowed", { status: 405 });
 			} else if (url.pathname === "/core/dev-registry") {
 				// Used by the local explorer to aggregate resources across instances

@@ -670,7 +670,7 @@ describe("Workflows", () => {
 				`--port=${port}`,
 			]);
 
-			expect(result.exitCode).toBe(0);
+			expect(result.exitCode, result.output).toBe(0);
 			expect(result.output).toContain(
 				'Workflow "my-workflow3" instances removed successfully from local dev session.'
 			);

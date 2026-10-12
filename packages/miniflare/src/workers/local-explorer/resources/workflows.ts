@@ -344,7 +344,8 @@ export async function getWorkflowDetails(
 }
 
 /**
- * Deletes a configured Workflow's persistence directory through native disk.
+ * Delete all instances of a workflow by removing all .sqlite files
+ * from the persistence directory via the loopback.
  */
 export async function deleteWorkflow(
 	c: AppContext,
@@ -360,21 +361,14 @@ export async function deleteWorkflow(
 		);
 	}
 
-	if (c.env.MINIFLARE_WORKFLOW_STORAGE === undefined) {
-		return errorResponse(500, 10001, "Workflow storage service not available");
+	if (c.env.MINIFLARE_LOOPBACK === undefined) {
+		return errorResponse(500, 10001, "Loopback service not available");
 	}
-	if (/[\\/]/.test(workflowName) || workflowName.includes("\0")) {
-		return errorResponse(500, 10001, "Invalid workflow storage path");
-	}
-	const response = await c.env.MINIFLARE_WORKFLOW_STORAGE.fetch(
-		`http://disk/${encodeURIComponent(`miniflare-workflows-${workflowName}`)}`,
-		{
-			method: "DELETE",
-		}
-	);
-	if (!response.ok && response.status !== 404) {
-		return errorResponse(500, 10001, "Failed to delete workflow storage");
-	}
+
+	const encodedName = encodeURIComponent(workflowName);
+	const loopbackUrl = `http://localhost/core/workflow-storage/${encodedName}`;
+
+	await c.env.MINIFLARE_LOOPBACK.fetch(loopbackUrl, { method: "DELETE" });
 
 	statusCountsCache.delete(workflowName);
 

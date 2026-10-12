@@ -25,9 +25,7 @@ import {
 	getWorkflowBindingServiceName,
 	getWorkflowNamespaceKey,
 	WORKFLOWS_PLUGIN_NAME,
-	WORKFLOWS_STORAGE_SERVICE_NAME,
 } from "../workflows";
-import { WORKFLOW_STORAGE_BINDING } from "../workflows/storage";
 import {
 	EMAIL_STORE_SERVICE_NAME,
 	getUserServiceName,
@@ -95,16 +93,6 @@ export function getExplorerServices(
 	);
 
 	const explorerBindings: Worker_Binding[] = [
-		...(Object.keys(bindingIdMap.workflows).length === 0
-			? []
-			: [
-					{
-						name: WORKFLOW_STORAGE_BINDING,
-						service: {
-							name: `${WORKFLOWS_STORAGE_SERVICE_NAME}-${Object.keys(bindingIdMap.workflows)[0]}`,
-						},
-					},
-				]),
 		// Workflow creation still uses the configured binding API. D1, KV and R2
 		// operations use the dedicated internal storage service bindings below.
 		...workflowProxyBindings,

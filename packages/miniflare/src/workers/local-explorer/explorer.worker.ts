@@ -136,7 +136,6 @@ export type Env = {
 	[CoreBindings.SERVICE_OBSERVABILITY_COLLECTOR]?: Fetcher;
 	// Email store RPC. Backs the Email tab's routing/sending views.
 	[CoreBindings.SERVICE_EMAIL_STORE]: EmailStoreService;
-	MINIFLARE_WORKFLOW_STORAGE?: Fetcher;
 };
 
 export type AppBindings = { Bindings: Env };
