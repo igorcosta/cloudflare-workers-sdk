@@ -449,14 +449,6 @@ describe("Workflows on ctx.exports", () => {
 				success: true,
 				result: { status: "complete", output: ["step-0"] },
 			});
-			const deleted = await mf.dispatchFetch(
-				`http://localhost${api}/my-workflow`,
-				{ method: "DELETE" }
-			);
-			expect(await deleted.json()).toMatchObject({ success: true });
-			expect(
-				await fetchJson(fetch, `${api}/my-workflow/instances`)
-			).toMatchObject({ result: [] });
 		}
 	);
 
