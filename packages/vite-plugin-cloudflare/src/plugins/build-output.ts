@@ -33,6 +33,7 @@ export const buildOutputPlugin = createPlugin("build-output", (ctx) => {
 				await writeWorkerConfig({
 					root: ctx.resolvedViteConfig.root,
 					config: workerNewConfig,
+					isPreview: isPreviewBuild(),
 				});
 				await writeRoot();
 				return;
@@ -89,6 +90,7 @@ export const buildOutputPlugin = createPlugin("build-output", (ctx) => {
 			await writeWorkerConfig({
 				root: ctx.resolvedViteConfig.root,
 				config: workerNewConfig,
+				isPreview: isPreviewBuild(),
 				manifest: {
 					type: "complete",
 					mainModule: entryChunk.fileName,

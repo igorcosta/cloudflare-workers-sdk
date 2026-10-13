@@ -11,6 +11,7 @@ import { normalizePath } from "vite";
 import { hasAssetsConfigChanged } from "../asset-config";
 import { createBuildApp, removeAssetsField } from "../build";
 import { buildOutputContainers } from "../build-output-containers";
+import { isPreviewBuild } from "../build-output-env";
 import {
 	applyWorkerEsbuildSupported,
 	cloudflareBuiltInModules,
@@ -241,6 +242,7 @@ export const configPlugin = createPlugin("config", (ctx) => {
 						await writeWorkerConfig({
 							root: builder.config.root,
 							config: entryWorkerNewConfig,
+							isPreview: isPreviewBuild(),
 						});
 					} else {
 						const entryWorkerConfig = ctx.getWorkerConfig(
