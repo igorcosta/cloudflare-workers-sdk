@@ -25,7 +25,6 @@ test(
 						}),
 					],
 					test: {
-						fsModuleCache: true,
 						coverage: {
 							reporter: ["json-summary"],
 							include: ["src/**"],
@@ -121,7 +120,6 @@ test(
 						})
 					],
 					test: {
-						fsModuleCache: true,
 						sequence: { sequencer: DeterministicSequencer },
 						testTimeout: 90_000,
 						coverage: {
