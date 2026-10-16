@@ -93,6 +93,8 @@ describe("Autohand Code skills installation", () => {
 	}) => {
 		const rosie =
 			await vi.importActual<typeof import("rosie-skills")>("rosie-skills");
+		// Rosie's real registry reads USERPROFILE instead of HOME on Windows.
+		vi.stubEnv("USERPROFILE", os.homedir());
 		createAgentDir(".autohand");
 		const skillsPath = path.join(os.homedir(), ".autohand", "skills");
 		mockRosieAgents.mockImplementation(rosie.agents);
